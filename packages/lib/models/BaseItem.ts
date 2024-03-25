@@ -966,10 +966,4 @@ export default class BaseItem extends BaseModel {
 		if (!md) return false;
 		return !!md.match(/^\[.*?\]\(:\/[0-9a-zA-Z]{32}\)$/);
 	}
-
-	public static isLink(text: any) {
-		if (!text) return false;
-		const linkRegex = /^https?:\/\/[^)\s]+$/;
-		return !!text.match(linkRegex);
-	}
 }

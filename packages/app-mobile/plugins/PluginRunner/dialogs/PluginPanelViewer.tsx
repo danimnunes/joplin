@@ -1,19 +1,19 @@
 
 import { PluginHtmlContents, PluginStates, ViewInfo } from '@joplin/lib/services/plugins/reducer';
 import * as React from 'react';
-import { Button, IconButton, Modal, Portal, SegmentedButtons, Text } from 'react-native-paper';
+import { Button, Portal, SegmentedButtons, Text } from 'react-native-paper';
 import useViewInfos from './hooks/useViewInfos';
-import WebviewController, { ContainerType } from '@joplin/lib/services/plugins/WebviewController';
-import { useEffect, useMemo, useState } from 'react';
+import { ContainerType } from '@joplin/lib/services/plugins/WebviewController';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PluginService from '@joplin/lib/services/plugins/PluginService';
 import { connect } from 'react-redux';
 import { AppState } from '../../../utils/types';
 import PluginUserWebView from './PluginUserWebView';
-import { View, useWindowDimensions, StyleSheet } from 'react-native';
+import { View, StyleSheet, AccessibilityInfo } from 'react-native';
 import { _ } from '@joplin/lib/locale';
-import { Theme } from '@joplin/lib/themes/type';
-import { themeStyle } from '@joplin/lib/theme';
 import Setting from '@joplin/lib/models/Setting';
+import { Dispatch } from 'redux';
+import DismissibleDialog from '../../../components/DismissibleDialog';
 
 interface Props {
 	themeId: number;
@@ -21,53 +21,79 @@ interface Props {
 	pluginHtmlContents: PluginHtmlContents;
 	pluginStates: PluginStates;
 	visible: boolean;
-	onClose: ()=> void;
+	dispatch: Dispatch;
 }
 
 
-const useStyles = (themeId: number) => {
-	const windowSize = useWindowDimensions();
+const styles = StyleSheet.create({
+	webView: {
+		backgroundColor: 'transparent',
+		display: 'flex',
+	},
+	webViewContainer: {
+		flexGrow: 1,
+		flexShrink: 1,
+	},
+});
 
-	return useMemo(() => {
-		const theme: Theme = themeStyle(themeId);
+type ButtonInfo = {
+	value: string;
+	label: string;
+	icon: string;
+};
 
-		return StyleSheet.create({
-			webView: {
-				backgroundColor: 'transparent',
-				display: 'flex',
-			},
-			webViewContainer: {
-				flexGrow: 1,
-				flexShrink: 1,
-			},
-			closeButtonContainer: {
-				flexDirection: 'row',
-				justifyContent: 'flex-end',
-			},
-			dialog: {
-				backgroundColor: theme.backgroundColor,
-				borderRadius: 12,
-				padding: 10,
+const useSelectedTabId = (
+	buttonInfos: ButtonInfo[],
+	viewInfoById: Record<string, ViewInfo>,
+) => {
+	const viewInfoByIdRef = useRef(viewInfoById);
+	viewInfoByIdRef.current = viewInfoById;
 
-				height: windowSize.height * 0.9,
-				width: windowSize.width * 0.97,
+	const getDefaultSelectedTabId = useCallback((): string|undefined => {
+		const lastSelectedId = Setting.value('ui.lastSelectedPluginPanel');
+		const lastSelectedInfo = viewInfoByIdRef.current[lastSelectedId];
+		if (lastSelectedId && lastSelectedInfo && lastSelectedInfo.view.opened) {
+			return lastSelectedId;
+		} else {
+			return buttonInfos[0]?.value;
+		}
+	}, [buttonInfos]);
 
-				// Center
-				marginLeft: 'auto',
-				marginRight: 'auto',
-			},
-		});
-	}, [themeId, windowSize.width, windowSize.height]);
+	const [selectedTabId, setSelectedTabId] = useState<string|undefined>(getDefaultSelectedTabId);
+
+	useEffect(() => {
+		if (!selectedTabId || !viewInfoById[selectedTabId]?.view?.opened) {
+			setSelectedTabId(getDefaultSelectedTabId());
+		}
+	}, [selectedTabId, viewInfoById, getDefaultSelectedTabId]);
+
+	useEffect(() => {
+		if (!selectedTabId) return;
+
+		const info = viewInfoByIdRef.current[selectedTabId];
+		Setting.setValue('ui.lastSelectedPluginPanel', selectedTabId);
+		AccessibilityInfo.announceForAccessibility(_('%s tab opened', getTabLabel(info)));
+	}, [selectedTabId]);
+
+	return { setSelectedTabId, selectedTabId };
 };
 
 const emptyCallback = () => {};
 
+const getTabLabel = (info: ViewInfo) => {
+	// Handles the case where a plugin just unloaded or hasn't loaded yet.
+	if (!info) {
+		return '...';
+	}
+
+	return PluginService.instance().pluginById(info.plugin.id).manifest.name;
+};
 const PluginPanelViewer: React.FC<Props> = props => {
 	const viewInfos = useViewInfos(props.pluginStates);
 	const viewInfoById = useMemo(() => {
 		const result: Record<string, ViewInfo> = {};
 		for (const info of viewInfos) {
-			result[`${info.plugin.id}--${info.view.id}`] = info;
+			result[info.view.id] = info;
 		}
 		return result;
 	}, [viewInfos]);
@@ -75,41 +101,17 @@ const PluginPanelViewer: React.FC<Props> = props => {
 	const buttonInfos = useMemo(() => {
 		return Object.entries(viewInfoById)
 			.filter(([_id, info]) => info.view.containerType === ContainerType.Panel)
+			.filter(([_id, info]) => info.view.opened)
 			.map(([id, info]) => {
-				const pluginName = PluginService.instance().pluginById(info.plugin.id).manifest.name;
 				return {
 					value: id,
-					label: pluginName,
+					label: getTabLabel(info),
 					icon: 'puzzle',
 				};
 			});
 	}, [viewInfoById]);
 
-	const [selectedTabId, setSelectedTabId] = useState(() => {
-		const lastSelectedId = Setting.value('ui.lastSelectedPluginPanel');
-		if (lastSelectedId && viewInfoById[lastSelectedId]) {
-			return lastSelectedId;
-		} else {
-			return buttonInfos[0]?.value;
-		}
-	});
-
-	useEffect(() => {
-		if (!selectedTabId) return () => {};
-
-		const info = viewInfoById[selectedTabId];
-		const plugin = PluginService.instance().pluginById(info.plugin.id);
-		const controller = plugin.viewController(info.view.id) as WebviewController;
-		controller.setIsShownInModal(true);
-		Setting.setValue('ui.lastSelectedPluginPanel', selectedTabId);
-
-		return () => {
-			controller.setIsShownInModal(false);
-		};
-	}, [viewInfoById, selectedTabId]);
-
-
-	const styles = useStyles(props.themeId);
+	const { selectedTabId, setSelectedTabId } = useSelectedTabId(buttonInfos, viewInfoById);
 
 	const viewInfo = viewInfoById[selectedTabId];
 
@@ -138,7 +140,11 @@ const PluginPanelViewer: React.FC<Props> = props => {
 		// As such, we include a special case:
 		if (buttonInfos.length === 1) {
 			const buttonInfo = buttonInfos[0];
-			return <Button icon={buttonInfo.icon}>{buttonInfo.label}</Button>;
+			return (
+				<Button icon={buttonInfo.icon} onPress={()=>setSelectedTabId(buttonInfo.value)}>
+					{buttonInfo.label}
+				</Button>
+			);
 		}
 
 		return (
@@ -150,27 +156,23 @@ const PluginPanelViewer: React.FC<Props> = props => {
 		);
 	};
 
-	const closeButton = (
-		<View style={styles.closeButtonContainer}>
-			<IconButton
-				icon='close'
-				accessibilityLabel={_('Close')}
-				onPress={props.onClose}
-			/>
-		</View>
-	);
+	const onClose = useCallback(() => {
+		props.dispatch({
+			type: 'SET_PLUGIN_PANELS_DIALOG_VISIBLE',
+			visible: false,
+		});
+	}, [props.dispatch]);
 
 	return (
 		<Portal>
-			<Modal
+			<DismissibleDialog
+				themeId={props.themeId}
 				visible={props.visible}
-				onDismiss={props.onClose}
-				contentContainerStyle={styles.dialog}
+				onDismiss={onClose}
 			>
-				{closeButton}
 				{renderTabContent()}
 				{renderTabSelector()}
-			</Modal>
+			</DismissibleDialog>
 		</Portal>
 	);
 };
@@ -179,6 +181,7 @@ export default connect((state: AppState) => {
 	return {
 		themeId: state.settings.theme,
 		pluginHtmlContents: state.pluginService.pluginHtmlContents,
+		visible: state.showPanelsDialog,
 		pluginStates: state.pluginService.plugins,
 	};
 })(PluginPanelViewer);

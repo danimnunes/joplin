@@ -35,7 +35,7 @@ export default class PluginRunner extends BasePluginRunner {
 
 		const messageChannelId = `plugin-message-channel-${pluginId}-${Date.now()}`;
 		const messenger = new RNToWebViewMessenger<PluginMainProcessApi, PluginWebViewApi>(
-			messageChannelId, this.webviewRef.current, { api: pluginApi, onError, onLog },
+			messageChannelId, this.webviewRef, { api: pluginApi, onError, onLog },
 		);
 
 		this.messageEventListeners.push((event) => {
@@ -60,6 +60,11 @@ export default class PluginRunner extends BasePluginRunner {
 
 	public override async stop(plugin: Plugin) {
 		logger.info('Stopping plugin with id', plugin.id);
+
+		if (!this.webviewRef.current) {
+			logger.debug('WebView already unloaded. Plugin already stopped. ID: ', plugin.id);
+			return;
+		}
 
 		this.webviewRef.current.injectJS(`
 			pluginBackgroundPage.stopPlugin(${JSON.stringify(plugin.id)});

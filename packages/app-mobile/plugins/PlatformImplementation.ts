@@ -3,15 +3,16 @@ import { Implementation as WindowImplementation } from '@joplin/lib/services/plu
 import Setting from '@joplin/lib/models/Setting';
 import { reg } from '@joplin/lib/registry';
 import BasePlatformImplementation, { Joplin } from '@joplin/lib/services/plugins/BasePlatformImplementation';
-import { Implementation as ImagingImplementation } from '@joplin/lib/services/plugins/api/JoplinImaging';
+import { CreateFromPdfOptions, Implementation as ImagingImplementation } from '@joplin/lib/services/plugins/api/JoplinImaging';
 import RNVersionInfo from 'react-native-version-info';
 import { _ } from '@joplin/lib/locale';
 import shim from '@joplin/lib/shim';
-import Clipboard from '@react-native-community/clipboard';
+import Clipboard from '@react-native-clipboard/clipboard';
 
 
 
 interface Components {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	[key: string]: any;
 }
 
@@ -60,6 +61,7 @@ export default class PlatformImplementation extends BasePlatformImplementation {
 		};
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public registerComponent(name: string, component: any) {
 		this.components_[name] = component;
 	}
@@ -74,18 +76,41 @@ export default class PlatformImplementation extends BasePlatformImplementation {
 
 	public get imaging(): ImagingImplementation {
 		return {
-			nativeImage: null,
+			createFromPath: async (_path: string) => {
+				throw new Error('Not implemented: createFromPath');
+			},
+			createFromPdf: (_path: string, _options: CreateFromPdfOptions) => {
+				throw new Error('Not implemented: createFromPdf');
+			},
+			getPdfInfo: async () => {
+				throw new Error('Not implemented: getPdfInfo');
+			},
 		};
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public get nativeImage(): any {
 		return null;
 	}
 
-	public get clipboard(): any {
+	public get clipboard() {
+		// Deny access to the clipboard on iOS, as per AppStore guidelines
+		// (as of March 2024).
+		if (shim.mobilePlatform() === 'ios') {
+			return {
+				readText: () => {
+					throw new Error('Not available on iOS');
+				},
+				writeText: () => {
+					throw new Error('Not available on iOS');
+				},
+				availableFormats: (): string[] => [],
+			};
+		}
 		return {
 			readText: () => Clipboard.getString(),
 			writeText: (text: string) => Clipboard.setString(text),
+			availableFormats: () => ['text/plain'],
 		};
 	}
 
